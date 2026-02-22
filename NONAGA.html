@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>NONAGA v1.3</title>
+<style>
+  body { background:#222; color:white; text-align:center; }
+  canvas { background:#333; margin-top:10px; cursor:pointer; }
+  button { margin:10px; padding:10px 20px; font-size:16px; }
+</style>
+</head>
+<body>
+
+<h2>NONAGA v1.3</h2>
+<p id="turnText">Turn: Blue</p>
+<p id="message"></p>
+<div id="choices"></div>
+
+<canvas id="canvas" width="600" height="600"></canvas>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const turnText = document.getElementById("turnText");
+const message = document.getElementById("message");
+const choices = document.getElementById("choices");
+
+const RADIUS = 2;
+const HEX_SIZE = 50;
+const CENTER_X = canvas.width / 2;
+const CENTER_Y = canvas.height / 2;
+
+const board = new Map();
+
+let currentPlayer = "blue";
+let selectedCell = null;
+let possibleMoves = [];
+let blink = true;
+let gameOver = false;
+let confirmMode = false;
+
+const DIRECTIONS = [
+  {q:1,r:0},{q:-1,r:0},
+  {q:0,r:1},{q:0,r:-1},
+  {q:1,r:-1},{q:-1,r:1}
+];
+
+function key(q,r){ return `${q},${r}`; }
+
+function isValid(q,r){
+  return Math.abs(q)<=RADIUS &&
+         Math.abs(r)<=RADIUS &&
+         Math.abs(q+r)<=RADIUS;
+}
+
+function axialToPixel(q, r){
+  const x = HEX_SIZE * (3/2 * q);
+  const y = HEX_SIZE * (Math.sqrt(3)/2 * q + Math.sqrt(3) * r);
+  return { x: CENTER_X + x, y: CENTER_Y + y };
+}
+
+function pixelToAxial(x, y){
+  const px = x - CENTER_X;
+  const py = y - CENTER_Y;
+  const q = (2/3 * px) / HEX_SIZE;
+  const r = (-1/3 * px + Math.sqrt(3)/3 * py) / HEX_SIZE;
+  return hexRound(q, r);
+}
+
+function hexRound(q, r){
+  let s = -q - r;
+  let rq = Math.round(q);
+  let rr = Math.round(r);
+  let rs = Math.round(s);
+
+  const q_diff = Math.abs(rq - q);
+  const r_diff = Math.abs(rr - r);
+  const s_diff = Math.abs(rs - s);
+
+  if(q_diff > r_diff && q_diff > s_diff){
+    rq = -rr - rs;
+  }else if(r_diff > s_diff){
+    rr = -rq - rs;
+  }
+
+  return { q: rq, r: rr };
+}
+
+function createBoard(){
+  board.clear();
+  for(let q=-RADIUS;q<=RADIUS;q++){
+    for(let r=-RADIUS;r<=RADIUS;r++){
+      if(isValid(q,r)){
+        board.set(key(q,r), { q, r, piece:null });
+      }
+    }
+  }
+}
+
+function getVertices(){
+  return [
+    {q:0, r:-RADIUS},
+    {q:RADIUS, r:-RADIUS},
+    {q:RADIUS, r:0},
+    {q:0, r:RADIUS},
+    {q:-RADIUS, r:RADIUS},
+    {q:-RADIUS, r:0}
+  ];
+}
+
+function placeInitialPieces(){
+  const vertices = getVertices();
+  vertices.forEach((v,i)=>{
+    board.get(key(v.q,v.r)).piece = (i%2===0)?"blue":"red";
+  });
+}
+
+function computeMoves(cell){
+  const moves=[];
+  for(const dir of DIRECTIONS){
+    let nq=cell.q+dir.q;
+    let nr=cell.r+dir.r;
+    let lastEmpty=null;
+
+    while(isValid(nq,nr)){
+      const next=board.get(key(nq,nr));
+      if(next.piece) break;
+      lastEmpty=next;
+      nq+=dir.q;
+      nr+=dir.r;
+    }
+    if(lastEmpty) moves.push(lastEmpty);
+  }
+  return moves;
+}
+
+function checkWin(color){
+  for(const cell of board.values()){
+    if(cell.piece!==color) continue;
+
+    for(const dir of DIRECTIONS){
+      const c2 = board.get(key(cell.q+dir.q, cell.r+dir.r));
+      const c3 = board.get(key(cell.q+2*dir.q, cell.r+2*dir.r));
+      if(c2 && c3 &&
+         c2.piece===color &&
+         c3.piece===color){
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function drawHex(x,y,highlight=false){
+  ctx.beginPath();
+  for(let i=0;i<6;i++){
+    const angle = Math.PI/180 * (60*i);
+    const px = x + HEX_SIZE*Math.cos(angle);
+    const py = y + HEX_SIZE*Math.sin(angle);
+    if(i===0) ctx.moveTo(px,py);
+    else ctx.lineTo(px,py);
+  }
+  ctx.closePath();
+  if(highlight){ ctx.fillStyle="yellow"; ctx.fill(); }
+  ctx.strokeStyle="white";
+  ctx.stroke();
+}
+
+function drawPiece(x,y,color){
+  ctx.beginPath();
+  ctx.arc(x,y,HEX_SIZE*0.5,0,Math.PI*2);
+  ctx.fillStyle=color;
+  ctx.fill();
+}
+
+function drawRing(x,y){
+  ctx.beginPath();
+  ctx.arc(x,y,HEX_SIZE*0.65,0,Math.PI*2);
+  ctx.lineWidth=6;
+  ctx.strokeStyle="white";
+  ctx.stroke();
+  ctx.lineWidth=1;
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  for(const cell of board.values()){
+    const p=axialToPixel(cell.q,cell.r);
+
+    let highlight=false;
+    if(selectedCell && blink){
+      for(const m of possibleMoves){
+        if(m.q===cell.q && m.r===cell.r) highlight=true;
+      }
+    }
+
+    drawHex(p.x,p.y,highlight);
+
+    if(cell.piece) drawPiece(p.x,p.y,cell.piece);
+
+    if(selectedCell &&
+       cell.q===selectedCell.q &&
+       cell.r===selectedCell.r){
+      drawRing(p.x,p.y);
+    }
+  }
+}
+
+canvas.addEventListener("click",e=>{
+  if(gameOver || confirmMode) return;
+
+  const rect=canvas.getBoundingClientRect();
+  const x=e.clientX-rect.left;
+  const y=e.clientY-rect.top;
+
+  const hex=pixelToAxial(x,y);
+  const cell=board.get(key(hex.q,hex.r));
+  if(!cell) return;
+
+  if(cell.piece===currentPlayer){
+
+    if(selectedCell &&
+       selectedCell.q===cell.q &&
+       selectedCell.r===cell.r){
+      selectedCell=null;
+      possibleMoves=[];
+    }else{
+      selectedCell=cell;
+      possibleMoves=computeMoves(cell);
+    }
+
+  }else if(selectedCell){
+    for(const move of possibleMoves){
+      if(move.q===cell.q && move.r===cell.r){
+
+        cell.piece=currentPlayer;
+        selectedCell.piece=null;
+
+        if(checkWin(currentPlayer)){
+          gameOver=true;
+          message.textContent =
+            "Win " + (currentPlayer==="blue"?"Blue":"Red") + " Player!";
+
+          setTimeout(()=>{
+            choices.innerHTML =
+              `<button onclick="restart()">Continue</button>
+               <button onclick="endGame()">Quit</button>`;
+          },5000);
+        }
+
+        selectedCell=null;
+        possibleMoves=[];
+
+        currentPlayer =
+          (currentPlayer==="blue")?"red":"blue";
+        turnText.textContent =
+          "Turn: " + (currentPlayer==="blue"?"Blue":"Red");
+
+        break;
+      }
+    }
+  }
+
+  draw();
+});
+
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"){
+
+    if(gameOver && choices.innerHTML!==""){
+      endGame();
+      return;
+    }
+
+    if(gameOver) return;
+
+    if(!confirmMode){
+      confirmMode=true;
+      message.textContent="棄権しますか？";
+      choices.innerHTML =
+        `<button onclick="endGame()">はい</button>
+         <button onclick="cancelResign()">いいえ</button>`;
+    }
+  }
+});
+
+function cancelResign(){
+  confirmMode=false;
+  message.textContent="";
+  choices.innerHTML="";
+}
+
+function restart(){
+  gameOver=false;
+  confirmMode=false;
+  message.textContent="";
+  choices.innerHTML="";
+  currentPlayer="blue";
+  turnText.textContent="Turn: Blue";
+
+  selectedCell=null;
+  possibleMoves=[];
+  blink=true;
+
+  createBoard();
+  placeInitialPieces();
+  draw();
+}
+
+function endGame(){
+  gameOver=false;
+  confirmMode=false;
+  message.textContent="";
+  choices.innerHTML="";
+  currentPlayer="blue";
+  turnText.textContent="Turn: Blue";
+
+  selectedCell=null;
+  possibleMoves=[];
+  blink=true;
+
+  createBoard();
+  placeInitialPieces();
+  draw();
+}
+
+setInterval(()=>{
+  blink=!blink;
+  if(selectedCell) draw();
+},1000);
+
+createBoard();
+placeInitialPieces();
+draw();
+</script>
+</body>
+</html>
