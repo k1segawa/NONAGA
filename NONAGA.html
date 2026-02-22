@@ -276,10 +276,10 @@ document.addEventListener("keydown",e=>{
 
     if(!confirmMode){
       confirmMode=true;
-      message.textContent="棄権しますか？";
+      message.textContent="Stop Retire?";
       choices.innerHTML =
-        `<button onclick="endGame()">はい</button>
-         <button onclick="cancelResign()">いいえ</button>`;
+        `<button onclick="endGame()">Yes</button>
+         <button onclick="cancelResign()">No</button>`;
     }
   }
 });
